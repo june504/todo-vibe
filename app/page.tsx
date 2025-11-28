@@ -610,7 +610,7 @@ export default function Home() {
        <div className="flex items-center justify-end gap-3">
           <div className="text-right">
             <p className="text-xs text-muted-foreground">로그인 계정</p>
-            <p className="text-sm font-semibold text-foreground">
+            <p className="text-sm font-semibold text-foreground dark:text-slate-50">
               {session?.user?.email}
             </p>
           </div>
