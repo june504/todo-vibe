@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import type { Session } from "@supabase/supabase-js"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -61,6 +62,7 @@ const priorityBadgeStyles: Record<Priority, string> = {
 
 type FilterType = "all" | "completed" | "pending"
 type SortType = "date" | "priority" | "category" | "name"
+type FeedbackMessage = { type: "error" | "success"; message: string }
 
 export default function Home() {
   const [todos, setTodos] = useState<Todo[]>([])
@@ -87,6 +89,12 @@ export default function Home() {
   const [fieldEditValue, setFieldEditValue] = useState<string>("")
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [feedback, setFeedback] = useState<FeedbackMessage | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
+  const [authEmail, setAuthEmail] = useState("")
+  const [authPassword, setAuthPassword] = useState("")
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin")
+  const [authLoading, setAuthLoading] = useState(false)
 
   const completedCount = useMemo(
     () => todos.filter((todo) => todo.completed).length,
@@ -186,6 +194,11 @@ export default function Home() {
     }
   }, [])
 
+  const reportError = useCallback((message: string, error?: unknown) => {
+    console.error(message, error)
+    setFeedback({ type: "error", message })
+  }, [])
+
   const fetchTodos = useCallback(async () => {
     setIsLoading(true)
     const { data, error } = await supabase
@@ -194,21 +207,121 @@ export default function Home() {
       .order("created_at", { ascending: false })
 
     if (error) {
-      console.error("Failed to load todos", error)
+      reportError("할일을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.", error)
       setIsLoading(false)
       return
     }
 
     const mapped = (data ?? []).map(mapRowToTodo)
     setTodos(mapped)
+    setFeedback(null)
     setIsLoading(false)
-  }, [mapRowToTodo])
+  }, [mapRowToTodo, reportError])
 
   useEffect(() => {
-    fetchTodos()
-  }, [fetchTodos])
+    const getSession = async () => {
+      const { data } = await supabase.auth.getSession()
+      setSession(data.session)
+    }
+    getSession()
+
+    const {
+      data: authListener,
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession)
+    })
+
+    return () => {
+      authListener.subscription.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (session) {
+      fetchTodos()
+    } else {
+      setTodos([])
+      setIsLoading(false)
+    }
+  }, [session, fetchTodos])
+
+  const handleAuth = async (mode: "signin" | "signup") => {
+    if (!authEmail || !authPassword) {
+      reportError("이메일과 비밀번호를 입력해주세요.")
+      return
+    }
+
+    setAuthLoading(true)
+    const { data, error } =
+      mode === "signin"
+        ? await supabase.auth.signInWithPassword({
+            email: authEmail,
+            password: authPassword,
+          })
+        : await supabase.auth.signUp({
+            email: authEmail,
+            password: authPassword,
+          })
+
+    setAuthLoading(false)
+
+    if (error) {
+      if (mode === "signup") {
+        if (error.message?.toLowerCase().includes("password")) {
+          reportError(
+            "비밀번호가 너무 짧거나 정책에 맞지 않습니다. 최소 6자 이상 입력해주세요.",
+            error
+          )
+          return
+        }
+        if (error.message?.toLowerCase().includes("already registered")) {
+          reportError("이미 등록된 이메일입니다. 로그인으로 이동해주세요.", error)
+          return
+        }
+      }
+
+      if (
+        mode === "signin" &&
+        error.message?.toLowerCase().includes("email not confirmed")
+      ) {
+        reportError(
+          "이메일 인증이 완료되지 않았습니다. 받은 메일에서 인증 링크를 확인해주세요.",
+          error
+        )
+        return
+      }
+
+      reportError(
+        mode === "signin"
+          ? "로그인에 실패했습니다. 이메일/비밀번호를 확인해주세요."
+          : "회원가입에 실패했습니다. 다시 시도해주세요.",
+        error
+      )
+      return
+    }
+
+    setFeedback(
+      mode === "signin"
+        ? { type: "success", message: "로그인에 성공했습니다." }
+        : {
+            type: "success",
+            message:
+              "회원가입이 완료되었습니다. 받은 메일의 안내에 따라 인증을 완료해주세요.",
+          }
+    )
+  }
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    setTodos([])
+    setFeedback({ type: "success", message: "로그아웃되었습니다." })
+  }
 
   const addTodo = async () => {
+    if (!session) {
+      reportError("로그인 후 할일을 추가할 수 있습니다.")
+      return
+    }
     if (form.text.trim() === "" || isSubmitting) return
 
     setIsSubmitting(true)
@@ -225,24 +338,26 @@ export default function Home() {
       .single()
 
     if (error) {
-      console.error("Failed to add todo", error)
+      reportError("할일을 추가하지 못했습니다. 잠시 후 다시 시도해주세요.", error)
       setIsSubmitting(false)
       return
     }
 
     setTodos((prev) => [mapRowToTodo(data), ...prev])
     resetForm()
+    setFeedback(null)
     setIsSubmitting(false)
   }
 
   const toggleTodo = async (id: string, completed: boolean) => {
+    if (!session) return
     const { error } = await supabase
       .from("todos")
       .update({ completed: !completed })
       .eq("id", id)
 
     if (error) {
-      console.error("Failed to toggle todo", error)
+      reportError("상태를 변경하지 못했습니다. 잠시 후 다시 시도해주세요.", error)
       return
     }
 
@@ -254,10 +369,11 @@ export default function Home() {
   }
 
   const deleteTodo = async (id: string) => {
+    if (!session) return
     const { error } = await supabase.from("todos").delete().eq("id", id)
 
     if (error) {
-      console.error("Failed to delete todo", error)
+      reportError("할일을 삭제하지 못했습니다. 잠시 후 다시 시도해주세요.", error)
       return
     }
 
@@ -282,6 +398,7 @@ export default function Home() {
   }
 
   const saveEditing = async (id: string) => {
+    if (!session) return
     if (editForm.text.trim() === "") return
 
     const { error } = await supabase
@@ -295,7 +412,7 @@ export default function Home() {
       .eq("id", id)
 
     if (error) {
-      console.error("Failed to update todo", error)
+      reportError("할일을 수정하지 못했습니다. 잠시 후 다시 시도해주세요.", error)
       return
     }
 
@@ -333,6 +450,7 @@ export default function Home() {
 
   const saveFieldEditing = async () => {
     if (!fieldEditing) return
+    if (!session) return
     const { id, field } = fieldEditing
     const value =
       field === "priority"
@@ -347,7 +465,7 @@ export default function Home() {
     const { error } = await supabase.from("todos").update(payload).eq("id", id)
 
     if (error) {
-      console.error("Failed to update field", error)
+      reportError("필드를 수정하지 못했습니다. 잠시 후 다시 시도해주세요.", error)
       return
     }
 
@@ -376,6 +494,100 @@ export default function Home() {
     if (e.key === "Enter") {
       addTodo()
     }
+  }
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-4 md:p-8">
+        <div className="mx-auto flex max-w-lg flex-col gap-6">
+          <div className="text-center space-y-2">
+            <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">
+              로그인 또는 회원가입
+            </h1>
+            <p className="text-slate-600 dark:text-slate-400">
+              이메일과 비밀번호로 로그인하거나 회원가입하세요.
+            </p>
+          </div>
+          {feedback && (
+            <div
+              className={cn(
+                "flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-sm shadow-sm",
+                feedback.type === "error"
+                  ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-100"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100"
+              )}
+            >
+              <p>{feedback.message}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setFeedback(null)}
+              >
+                닫기
+              </Button>
+            </div>
+          )}
+          <Card className="shadow-lg">
+            <CardHeader>
+              <CardTitle>
+                {authMode === "signin" ? "로그인" : "회원가입"}
+              </CardTitle>
+              <CardDescription>
+                {authMode === "signin"
+                  ? "등록된 계정으로 로그인하세요."
+                  : "새 계정을 만들어 사용하세요."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="auth-email">이메일</Label>
+                <Input
+                  id="auth-email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="auth-password">비밀번호</Label>
+                <Input
+                  id="auth-password"
+                  type="password"
+                  placeholder="******"
+                  value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        handleAuth(authMode)
+                      }
+                    }}
+                />
+              </div>
+              <Button
+                className="w-full"
+                onClick={() => handleAuth(authMode)}
+                disabled={authLoading}
+              >
+                {authMode === "signin" ? "로그인" : "회원가입"}
+              </Button>
+              <Button
+                variant="ghost"
+                className="w-full text-sm text-muted-foreground"
+                onClick={() =>
+                  setAuthMode(authMode === "signin" ? "signup" : "signin")
+                }
+              >
+                {authMode === "signin"
+                  ? "계정이 없나요? 회원가입하기"
+                  : "이미 계정이 있나요? 로그인하기"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -446,6 +658,18 @@ export default function Home() {
               </Card>
             </div>
 
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  {session.user?.email}
+                </p>
+                <p className="text-base font-semibold">현재 로그인 중</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleSignOut}>
+                로그아웃
+              </Button>
+            </div>
+
             <Card className="shadow-lg">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">카테고리별 현황</CardTitle>
@@ -487,6 +711,26 @@ export default function Home() {
           </div>
 
           <div className="space-y-6">
+            {feedback && (
+              <div
+                className={cn(
+                  "flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-sm shadow-sm",
+                  feedback.type === "error"
+                    ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-100"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                )}
+              >
+                <p>{feedback.message}</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setFeedback(null)}
+                >
+                  닫기
+                </Button>
+              </div>
+            )}
             <Card className="shadow-lg">
               <CardHeader>
                 <CardTitle>새 할일 추가</CardTitle>
