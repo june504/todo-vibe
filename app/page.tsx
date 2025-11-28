@@ -593,9 +593,9 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-4 md:p-8 pb-20">
-    <div className="mx-auto max-w-6xl space-y-6">
+     <div className="mx-auto max-w-6xl space-y-6">
       {/* 헤더: 타이틀 중앙 + 로그아웃 버튼 우측 상단 */}
-      <div className="relative">
+ 
         {/* 중앙 타이틀 */}
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-50">
@@ -607,7 +607,7 @@ export default function Home() {
         </div>
         
        {/* 우측 상단 절대 위치: 로그인 정보 + 로그아웃 버튼 */}
-       <div className="absolute top-0 right-0 flex items-center gap-3">
+       <div className="flex items-center justify-end gap-3">
           <div className="text-right">
             <p className="text-xs text-muted-foreground">로그인 계정</p>
             <p className="text-sm font-semibold text-foreground">
@@ -624,7 +624,7 @@ export default function Home() {
             로그아웃
           </Button>
         </div>
-      </div>
+
 
         <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
           <div className="space-y-6">
