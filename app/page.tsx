@@ -23,6 +23,7 @@ import {
   Edit3,
   Check,
   X,
+  LogOut,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { supabase } from "@/lib/supabaseClient"
@@ -592,15 +593,38 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-4 md:p-8 pb-20">
-      <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
+      {/* 헤더: 타이틀 중앙 + 로그아웃 버튼 우측 상단 */}
+      <div className="relative">
+        {/* 중앙 타이틀 */}
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-50">
-            할일 목록
+            📝 할일 관리
           </h1>
           <p className="text-slate-600 dark:text-slate-400">
             카테고리, 우선순위, 마감일로 스마트하게 관리하세요
           </p>
         </div>
+        
+       {/* 우측 상단 절대 위치: 로그인 정보 + 로그아웃 버튼 */}
+       <div className="absolute top-0 right-0 flex items-center gap-3">
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground">로그인 계정</p>
+            <p className="text-sm font-semibold text-foreground">
+              {session?.user?.email}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSignOut}
+            className="gap-2 hover:bg-red-50 hover:text-red-700 hover:border-red-300 dark:hover:bg-red-950/30 dark:hover:text-red-400 dark:hover:border-red-800 transition-colors whitespace-nowrap"
+          >
+            <LogOut className="h-4 w-4" />
+            로그아웃
+          </Button>
+        </div>
+      </div>
 
         <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
           <div className="space-y-6">
@@ -656,18 +680,6 @@ export default function Home() {
                   </div>
                 </CardContent>
               </Card>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  {session.user?.email}
-                </p>
-                <p className="text-base font-semibold">현재 로그인 중</p>
-              </div>
-              <Button variant="outline" size="sm" onClick={handleSignOut}>
-                로그아웃
-              </Button>
             </div>
 
             <Card className="shadow-lg">
