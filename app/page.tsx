@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { supabase } from "@/lib/supabaseClient"
 
 type Priority = "low" | "medium" | "high"
 
@@ -84,6 +85,8 @@ export default function Home() {
     field: "category" | "priority" | "dueDate"
   } | null>(null)
   const [fieldEditValue, setFieldEditValue] = useState<string>("")
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const completedCount = useMemo(
     () => todos.filter((todo) => todo.completed).length,
@@ -172,31 +175,92 @@ export default function Home() {
     setEditForm((prev) => ({ ...prev, [field]: value }))
   }
 
-  const addTodo = () => {
-    if (form.text.trim() === "") return
+  const mapRowToTodo = useCallback((row: any): Todo => {
+    return {
+      id: row.id,
+      text: row.text,
+      category: row.category,
+      priority: row.priority as Priority,
+      dueDate: row.due_date ?? "",
+      completed: row.completed,
+    }
+  }, [])
 
-    const newTodo: Todo = {
-      id: crypto.randomUUID(),
-      text: form.text.trim(),
-      category: form.category,
-      priority: form.priority,
-      dueDate: form.dueDate,
-      completed: false,
+  const fetchTodos = useCallback(async () => {
+    setIsLoading(true)
+    const { data, error } = await supabase
+      .from("todos")
+      .select("*")
+      .order("created_at", { ascending: false })
+
+    if (error) {
+      console.error("Failed to load todos", error)
+      setIsLoading(false)
+      return
     }
 
-    setTodos((prev) => [...prev, newTodo])
+    const mapped = (data ?? []).map(mapRowToTodo)
+    setTodos(mapped)
+    setIsLoading(false)
+  }, [mapRowToTodo])
+
+  useEffect(() => {
+    fetchTodos()
+  }, [fetchTodos])
+
+  const addTodo = async () => {
+    if (form.text.trim() === "" || isSubmitting) return
+
+    setIsSubmitting(true)
+    const { data, error } = await supabase
+      .from("todos")
+      .insert({
+        text: form.text.trim(),
+        category: form.category,
+        priority: form.priority,
+        due_date: form.dueDate || null,
+        completed: false,
+      })
+      .select("*")
+      .single()
+
+    if (error) {
+      console.error("Failed to add todo", error)
+      setIsSubmitting(false)
+      return
+    }
+
+    setTodos((prev) => [mapRowToTodo(data), ...prev])
     resetForm()
+    setIsSubmitting(false)
   }
 
-  const toggleTodo = (id: string) => {
+  const toggleTodo = async (id: string, completed: boolean) => {
+    const { error } = await supabase
+      .from("todos")
+      .update({ completed: !completed })
+      .eq("id", id)
+
+    if (error) {
+      console.error("Failed to toggle todo", error)
+      return
+    }
+
     setTodos((prev) =>
       prev.map((todo) =>
-        todo.id === id ? { ...todo, completed: !todo.completed } : todo
+        todo.id === id ? { ...todo, completed: !completed } : todo
       )
     )
   }
 
-  const deleteTodo = (id: string) => {
+  const deleteTodo = async (id: string) => {
+    const { error } = await supabase.from("todos").delete().eq("id", id)
+
+    if (error) {
+      console.error("Failed to delete todo", error)
+      return
+    }
+
     setTodos((prev) => prev.filter((todo) => todo.id !== id))
     if (editingId === id) {
       setEditingId(null)
@@ -217,8 +281,23 @@ export default function Home() {
     setEditingId(null)
   }
 
-  const saveEditing = (id: string) => {
+  const saveEditing = async (id: string) => {
     if (editForm.text.trim() === "") return
+
+    const { error } = await supabase
+      .from("todos")
+      .update({
+        text: editForm.text.trim(),
+        category: editForm.category,
+        priority: editForm.priority,
+        due_date: editForm.dueDate || null,
+      })
+      .eq("id", id)
+
+    if (error) {
+      console.error("Failed to update todo", error)
+      return
+    }
 
     setTodos((prev) =>
       prev.map((todo) =>
@@ -252,7 +331,7 @@ export default function Home() {
     setFieldEditValue("")
   }
 
-  const saveFieldEditing = () => {
+  const saveFieldEditing = async () => {
     if (!fieldEditing) return
     const { id, field } = fieldEditing
     const value =
@@ -260,12 +339,24 @@ export default function Home() {
         ? (fieldEditValue as Priority)
         : fieldEditValue
 
+    const payload =
+      field === "dueDate"
+        ? { due_date: value || null }
+        : { [field]: value }
+
+    const { error } = await supabase.from("todos").update(payload).eq("id", id)
+
+    if (error) {
+      console.error("Failed to update field", error)
+      return
+    }
+
     setTodos((prev) =>
       prev.map((todo) =>
         todo.id === id
           ? {
               ...todo,
-              [field]: value,
+              [field]: field === "dueDate" ? (value as string) : value,
             }
           : todo
       )
@@ -274,7 +365,7 @@ export default function Home() {
     setFieldEditValue("")
   }
 
-  const formattedDueDate = (value: string) => {
+  const formattedDueDate = (value: string | null | undefined) => {
     if (!value) return "기한 없음"
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return "기한 없음"
@@ -459,7 +550,7 @@ export default function Home() {
               </div>
             </div>
 
-            <Button onClick={addTodo} className="w-full gap-2">
+            <Button onClick={addTodo} className="w-full gap-2" disabled={isSubmitting}>
               <Plus className="h-4 w-4" />
               할일 추가
             </Button>
@@ -525,7 +616,11 @@ export default function Home() {
               </div>
             )}
 
-            {todos.length === 0 ? (
+            {isLoading ? (
+              <div className="text-center py-12 text-slate-500 dark:text-slate-400">
+                데이터를 불러오는 중입니다...
+              </div>
+            ) : todos.length === 0 ? (
               <div className="text-center py-12 text-slate-500 dark:text-slate-400">
                 <p className="text-lg">할일이 없습니다</p>
                 <p className="text-sm mt-2">새로운 할일을 추가해보세요!</p>
@@ -553,7 +648,7 @@ export default function Home() {
                         <div className="flex items-start gap-3">
                           <Checkbox
                             checked={todo.completed}
-                            onCheckedChange={() => toggleTodo(todo.id)}
+                            onCheckedChange={() => toggleTodo(todo.id, todo.completed)}
                             className="mt-1"
                           />
                           <div className="flex-1 space-y-2">
